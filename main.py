@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_mongoengine import MongoEngine
 from mongoengine.errors import DoesNotExist, ValidationError
+from dateutil.parser import parse
 
 app = Flask(__name__)
 app.config['MONGODB_SETTINGS'] = {
@@ -9,6 +10,7 @@ app.config['MONGODB_SETTINGS'] = {
     'port': 27017
 }
 db = MongoEngine(app)
+
 
 
 class User(db.Document):
@@ -24,9 +26,19 @@ class User(db.Document):
 class Building(db.Document):
     address = db.StringField(required=True, unique=True)
     tenants = db.ListField(db.ReferenceField('User'))
+    chat = db.ListField(db.ReferenceField('Message'))
 
     def to_dict(self):
-        return {'id': str(self.id), 'address': self.address, 'tenants': self.tenants}
+        return {'id': str(self.id), 'address': self.address, 'tenants': self.tenants, 'chat': self.chat}
+
+
+class Message(db.Document):
+    sender = db.ReferenceField('User', required=True)
+    date = db.DateTimeField(required=True)
+    content = db.StringField(required=True)
+
+    def to_dict(self):
+        return {'id': str(self.id), 'sender': self.sender, 'date': self.date, 'content': self.content}
 
 
 @app.route('/users', methods=['GET'])
@@ -90,6 +102,40 @@ def get_buildings_by_user():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/buildings/get_chat_by_building', methods=['GET'])
+def get_chat_by_building():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        chat = building.chat
+        res_for_client = []
+        for msg in chat:
+            res_for_client.append({'sender': msg.sender.name, 'email': msg.sender.email, 'date': msg.date.strftime("%Y-%m-%d"), 'content': msg.content})
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/add_message_to_chat', methods=['PUT'])
+def add_message_to_chat():
+    try:
+        data = request.args
+        email = data.get('email')
+        address = data.get('address')
+        user = User.objects.get(email=email)
+        building = Building.objects.get(address=address)
+        content = data.get('content')
+        date_string = data.get('date')
+        date_object = parse(date_string)
+        message = Message(sender=user, date=date_object, content=content)
+        message.save()
+        building.chat.append(message)
+        building.save()
+        return jsonify(building.to_dict()), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/users', methods=['POST'])
 def create_user():
     try:
@@ -146,6 +192,17 @@ def get_all_Buildings():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/users/get_name_by_email', methods=['GET'])
+def get_name_by_email():
+    try:
+        data = request.args
+        email = data.get('email')
+        user = User.objects.get(email=email)
+        return jsonify(user.name), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 404
+
+
 @app.route('/buildings/<string:id>', methods=['GET'])
 def get_Building(id):
     try:
@@ -188,11 +245,11 @@ def add_tenant_to_building():
         building.save()
         return jsonify(building.to_dict()), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e)}), 404
 
 
-@app.route('/buildings/remove_tenant_to_building', methods=['PUT'])
-def remove_tenant_to_building():
+@app.route('/buildings/remove_tenant_from_building', methods=['PUT'])
+def remove_tenant_from_building():
     try:
         data = request.args
         email = data.get('email')
