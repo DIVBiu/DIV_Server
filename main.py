@@ -107,11 +107,13 @@ def get_chat_by_building():
     try:
         data = request.args
         building = Building.objects.get(address=data["address"])
+        email = data["email"]
         chat = building.chat
         res_for_client = []
         for msg in chat:
-            res_for_client.append({'sender': msg.sender.name, 'email': msg.sender.email, 'date': msg.date.strftime("%Y-%m-%d"), 'content': msg.content})
+            res_for_client.append({'sender': msg.sender.name, 'sent': msg.sender.email == email, 'date': msg.date.strftime("%Y-%m-%d"), 'content': msg.content})
         return jsonify(res_for_client), 200
+        # return jsonify(chat), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
