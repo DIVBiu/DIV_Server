@@ -23,10 +23,30 @@ class User(db.Document):
         return {'id': str(self.id), 'name': self.name, 'email': self.email, 'password': self.password}
 
 
+class Result(db.Document):
+    user = db.ReferenceField('User', required=True)
+    choice = db.IntField(required=True)
+
+    def to_dict(self):
+        return {'id': str(self.id)}
+
+
+class Survey(db.Document):
+    title = db.StringField(required=True, unique=True)
+    question = db.StringField(required=True)
+    list_of_answers = db.ListField(db.StringField(), required=True)
+    deadline = db.DateTimeField(required=True)
+    results = db.ListField(db.ReferenceField('Result'))
+
+    def to_dict(self):
+        return {'id': str(self.id), 'question': self.question, 'list_of_answers': self.list_of_answers, 'deadline': self.deadline}
+
+
 class Building(db.Document):
     address = db.StringField(required=True, unique=True)
     tenants = db.ListField(db.ReferenceField('User'))
     chat = db.ListField(db.ReferenceField('Message'))
+    surveys = db.ListField(db.ReferenceField('Survey'))
 
     def to_dict(self):
         return {'id': str(self.id), 'address': self.address, 'tenants': self.tenants, 'chat': self.chat}
@@ -39,6 +59,22 @@ class Message(db.Document):
 
     def to_dict(self):
         return {'id': str(self.id), 'sender': self.sender, 'date': self.date, 'content': self.content}
+
+
+class Problem(db.Document):
+    type = db.IntField(required=True)
+    description = db.StringField(required=True)
+    status = db.IntField(required=True)
+    tenant = db.ReferenceField('User', required=True)
+    date1 = db.DateTimeField(required=True)
+    date2 = db.DateTimeField()
+    date3 = db.DateTimeField()
+    building = db.ReferenceField('Building', required=True)
+    remarks = db.ListField(db.StringField())
+
+    def to_dict(self):
+        return {'id': str(self.id), 'description': self.description}
+
 
 
 @app.route('/users', methods=['GET'])
@@ -118,7 +154,7 @@ def get_chat_by_building():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/buildings/add_message_to_chat', methods=['PUT'])
+@app.route('/buildings/add_message_to_chat', methods=['POST'])
 def add_message_to_chat():
     try:
         data = request.args
@@ -232,6 +268,42 @@ def create_Building():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/building/new_problem', methods=['POST'])
+def new_problem():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data['address'])
+        user = User.objects.get(email=data['email'])
+        type = data['type']
+        description = data['description']
+        client_date = parse(data['date'])
+        problem = Problem(type=type, description=description, status=1, tenant=user, date1=client_date, building=building)
+        problem.save()
+        return jsonify(problem.to_dict()), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/get_problems', methods=['GET'])
+def get_problem():
+    try:
+        types = ["", "Electricity", "Plumbing", "infrastructure", "Construction", "Other"]
+        statuses = ["", "opened", "in treatment", "solved"]
+        data = request.args
+        building = Building.objects.get(address=data['address'])
+        user = User.objects.get(email=data['email'])
+        problems = Problem.objects()
+        res_for_client = []
+        for problem in problems:
+            if problem.tenant == user and problem.building == building and not problem.status == 3:
+                # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status], 'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d")})
+                res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
+
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 
 @app.route('/buildings/add_tenant_to_building', methods=['PUT'])
 def add_tenant_to_building():
@@ -248,6 +320,77 @@ def add_tenant_to_building():
         return jsonify(building.to_dict()), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 404
+
+
+@app.route('/buildings/add_survey_to_building', methods=['POST'])
+def add_survey_to_building():
+    try:
+        data = request.args
+        address = data.get('address')
+        title = data.get('title')
+        question = data.get('question')
+        list_of_answers = data.get('list_of_answers').split('$')
+        deadline = parse(data.get('deadline'))
+        survey = Survey(title=title, question=question, deadline=deadline)
+        [survey.list_of_answers.append(answer) for answer in list_of_answers]
+        survey.save()
+        building = Building.objects.get(address=address)
+        building.surveys.append(survey)
+        building.save()
+        return jsonify(survey.to_dict()), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/get_surveys_by_building', methods=['GET'])
+def get_surveys_by_building():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        email = data["email"]
+        client_date = parse(data['client_date'])
+        user = User.objects.get(email=email)
+        surveys = building.surveys
+        res_for_client = []
+        for survey in surveys:
+            if survey.deadline > client_date and not (user in [result.user for result in survey.results]):
+                res_for_client.append({'title': survey.title, 'deadline': survey.deadline.strftime("%Y-%m-%d %H:%M:%S")})
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/get_survey_by_title', methods=['GET'])
+def get_survey_by_title():
+    try:
+        data = request.args
+        # building = Building.objects.get(address=data["address"])
+        # email = data["email"]
+        # index = data['index']
+        # user = User.objects.get(email=email)
+        survey = Survey.objects.get(title=data["title"])
+        res_for_client = {'question': survey.question, 'list_of_answers': survey.list_of_answers}
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/update_survey', methods=['POST'])
+def update_survey():
+    try:
+        data = request.args
+        # building = Building.objects.get(address=data["address"])
+        email = data["email"]
+        survey = Survey.objects.get(title=data["title"])
+        choice = data['choice']
+        user = User.objects.get(email=email)
+        result = Result(user=user, choice=choice)
+        result.save()
+        survey.results.append(result)
+        survey.save()
+        return jsonify(result.to_dict()), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/buildings/remove_tenant_from_building', methods=['PUT'])
