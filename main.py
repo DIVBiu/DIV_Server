@@ -1,7 +1,21 @@
+import os
+import random
+import string
+import sys
+import subprocess
+import requests
+import json
 from flask import Flask, jsonify, request
 from flask_mongoengine import MongoEngine
 from mongoengine.errors import DoesNotExist, ValidationError
 from dateutil.parser import parse
+import base64
+import io
+from PIL import Image
+
+# model_id = os.environ.get('NANONETS_MODEL_ID')
+# api_key = os.environ.get('NANONETS_API_KEY')
+
 
 app = Flask(__name__)
 app.config['MONGODB_SETTINGS'] = {
@@ -21,6 +35,14 @@ class User(db.Document):
 
     def to_dict(self):
         return {'id': str(self.id), 'name': self.name, 'email': self.email, 'password': self.password}
+
+
+class Car(db.Document):
+    car_number = db.StringField(required=True, unique=True)
+    owner = db.ReferenceField('User')
+
+    def to_dict(self):
+        return {'id': str(self.id), 'car_number': self.car_number, 'owner': str(self.owner.id)}
 
 
 class Result(db.Document):
@@ -47,6 +69,7 @@ class Building(db.Document):
     tenants = db.ListField(db.ReferenceField('User'))
     chat = db.ListField(db.ReferenceField('Message'))
     surveys = db.ListField(db.ReferenceField('Survey'))
+    cars = db.ListField(db.ReferenceField('Car'))
 
     def to_dict(self):
         return {'id': str(self.id), 'address': self.address, 'tenants': self.tenants, 'chat': self.chat}
@@ -296,8 +319,8 @@ def get_problem():
         res_for_client = []
         for problem in problems:
             if problem.tenant == user and problem.building == building and not problem.status == 3:
-                # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status], 'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d")})
-                res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
+                res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status], 'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d")})
+                # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
 
         return jsonify(res_for_client), 200
     except Exception as e:
@@ -442,6 +465,62 @@ def delete_Building(id):
         return jsonify({'error': 'Building not found'}), 404
     except ValidationError:
         return jsonify({'error': 'Invalid Building ID'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def fromImageToString(image_path):
+    model_id = "b40c2427-0c1b-465b-a5f5-74a66dce8747"
+    api_key = "13f5c022-e9c4-11ed-b37e-d24b52dfb1e9"
+    # image_path = sys.argv[1]
+
+    url = 'https://app.nanonets.com/api/v2/ObjectDetection/Model/' + model_id + '/LabelFile/'
+
+    data = {'file': open(image_path, 'rb'),    'modelId': ('', model_id)}
+
+    response = requests.post(url, auth=requests.auth.HTTPBasicAuth(api_key, ''), files=data)
+
+    return response
+
+
+def generate_random_string(length):
+    letters = string.ascii_lowercase
+    result_str = ''.join(random.choice(letters) for i in range(length))
+    return result_str
+
+
+@app.route('/cars/new_car', methods=['POST'])
+def add_car():
+    try:
+        data = request.form
+        user = User.objects.get(email=data['email'])
+        building = Building.objects.get(address=data['address'])
+        if not user in building.tenants:
+            return jsonify({'error': 'you are not registered in this building'}), 500
+        flag = data['flag']
+        car_number = data['car_number']
+        if flag == '1':
+            image_bytes = base64.b64decode(car_number.replace(" ", "+"))
+            file_name = generate_random_string(10) + ".jpg"
+            image = Image.open(io.BytesIO(image_bytes))
+            image.save(file_name)
+            #output = os.system("python ./prediction.py ./images/151.jpg")
+            output = fromImageToString("./" + file_name)
+            dict_obj = json.loads(output.text)
+            car_number = dict_obj['result'][0]['prediction'][0]['ocr_text']
+        is_exist = Car.objects(car_number=car_number)
+        if is_exist:
+            car = Car.objects.get(car_number=car_number)
+            if car in building.cars:
+                return jsonify({'error': 'This car is already registered in this building'}), 500
+        else:
+            car = Car(car_number=car_number, owner=user)
+            car.save()
+        building.cars.append(car)
+        building.save()
+        return jsonify(car.to_dict()), 201
+    except KeyError:
+        return jsonify({'error': 'Missing required field(s)'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
