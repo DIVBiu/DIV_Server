@@ -3,6 +3,8 @@ import random
 import string
 import sys
 import subprocess
+from datetime import datetime
+
 import requests
 import json
 from flask import Flask, jsonify, request
@@ -70,9 +72,12 @@ class Building(db.Document):
     chat = db.ListField(db.ReferenceField('Message'))
     surveys = db.ListField(db.ReferenceField('Survey'))
     cars = db.ListField(db.ReferenceField('Car'))
+    admin = db.ReferenceField('User', required=True)
+    pending_approval_tenants = db.ListField(db.ReferenceField('User'))
+    pending_approval_cars = db.ListField(db.ReferenceField('Car'))
 
     def to_dict(self):
-        return {'id': str(self.id), 'address': self.address, 'tenants': self.tenants, 'chat': self.chat}
+        return {'id': str(self.id), 'address': self.address, 'admin': self.admin, 'tenants': self.tenants, 'chat': self.chat}
 
 
 class Message(db.Document):
@@ -156,7 +161,23 @@ def get_buildings_by_user():
     try:
         data = request.args
         user = User.objects.get(email=data["email"])
-        return jsonify([t.address for t in Building.objects(tenants__in=[user])]), 200
+        return jsonify({"buildings": [t.address for t in Building.objects(tenants__in=[user])],
+                        "pending approval": [t.address for t in Building.objects(pending_approval_tenants__in=[user])]}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/am_I_admin', methods=['GET'])
+def am_I_admin():
+    try:
+        data = request.args
+        user = User.objects.get(email=data["email"])
+        building = Building.objects.get(address=data["address"])
+        if building.admin == user:
+            return jsonify({"answer": "yes"}), 201
+        else:
+            return jsonify({"answer": "no"}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -277,12 +298,13 @@ def get_Building(id):
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/buildings/new_building', methods=['POST'])
+@app.route('/buildings/new_building', methods=['PUT'])
 def create_Building():
     try:
         data = request.args
-        # address = data.get('address')
-        building = Building(address=data['address'])
+        admin = User.objects.get(email=data['email'])
+        building = Building(address=data['address'], admin=admin)
+        building.tenants.append(admin)
         building.save()
         return jsonify(building.to_dict()), 201
     except KeyError:
@@ -327,6 +349,22 @@ def get_problem():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/buildings/update_problem', methods=['POST'])
+def update_problem():
+    try:
+        data = request.args
+        problem = Problem.objects.get(id=data["id"])
+        if problem.status == 1:
+            problem.date2 = datetime.now()
+            problem.status = 2
+        if problem.status == 2:
+            problem.date3 = datetime.now()
+            problem.status = 3
+        problem.save()
+        return jsonify(problem.to_dict()), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/buildings/add_tenant_to_building', methods=['PUT'])
 def add_tenant_to_building():
@@ -338,7 +376,7 @@ def add_tenant_to_building():
         building = Building.objects.get(address=address)
         if user in building.tenants:
             return jsonify({'error': 'The tenant is already registered in this building'}), 500
-        building.tenants.append(user)
+        building.pending_approval_tenants.append(user)
         building.save()
         return jsonify(building.to_dict()), 200
     except Exception as e:
@@ -516,13 +554,89 @@ def add_car():
         else:
             car = Car(car_number=car_number, owner=user)
             car.save()
-        building.cars.append(car)
-        building.save()
-        return jsonify(car.to_dict()), 201
+        if user in [car.owner for car in building.cars]:
+            building.pending_approval_cars.append(car)
+            building.save()
+            return jsonify(car.to_dict()), 200
+        else:
+            building.cars.append(car)
+            building.save()
+            return jsonify(car.to_dict()), 201
     except KeyError:
         return jsonify({'error': 'Missing required field(s)'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+
+@app.route('/buildings/pending_approval_tenants', methods=['GET'])
+def get_pending_approval_tenants():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        res_for_client = []
+        for tenant in building.pending_approval_tenants:
+            res_for_client.append({'id': str(tenant.id), 'name': tenant.name, 'email': tenant.email})
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/pending_approval_cars', methods=['GET'])
+def get_pending_approval_cars():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        res_for_client = []
+        for car in building.pending_approval_cars:
+            res_for_client.append({'car_number': car.car_number, 'owner_email': car.owner.email, 'owner_name': car.owner.name})
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/approve_tenant', methods=['PUT'])
+def approve_tenant():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        tenant = User.objects.get(email=data["email"])
+        Building.objects(id=building.id).update_one(pull__pending_approval_tenants=tenant)
+        if data['ans'] == '1':
+            building.tenants.append(tenant)
+        building.save()
+        return jsonify(building.tenants), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/approve_car', methods=['PUT'])
+def approve_car():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        car = Car.objects.get(car_number=data["car_number"])
+        Building.objects(id=building.id).update_one(pull__pending_approval_cars=car)
+        if data['ans'] == '1':
+            building.cars.append(car)
+        building.save()
+        return jsonify(building.cars), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/amount_of_cars_per_building', methods=['GET'])
+def amount_of_cars_per_building():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        res = [car for car in building.cars if car.owner.email == data["email"]]
+        return jsonify({"answer": str(len(res))}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
 
 
 if __name__ == '__main__':
