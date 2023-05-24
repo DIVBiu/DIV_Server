@@ -94,6 +94,7 @@ class Problem(db.Document):
     description = db.StringField(required=True)
     status = db.IntField(required=True)
     tenant = db.ReferenceField('User', required=True)
+    image = db.BinaryField()
     date1 = db.DateTimeField(required=True)
     date2 = db.DateTimeField()
     date3 = db.DateTimeField()
@@ -316,13 +317,16 @@ def create_Building():
 @app.route('/building/new_problem', methods=['POST'])
 def new_problem():
     try:
-        data = request.args
+        data = request.form
         building = Building.objects.get(address=data['address'])
         user = User.objects.get(email=data['email'])
         type = data['type']
         description = data['description']
         client_date = parse(data['date'])
-        problem = Problem(type=type, description=description, status=1, tenant=user, date1=client_date, building=building)
+
+        image_bytes = base64.b64decode(data['image'].replace(" ", "+"))
+        problem = Problem(type=type, description=description, status=1, tenant=user, date1=client_date,
+                          image=image_bytes, building=building)
         problem.save()
         return jsonify(problem.to_dict()), 200
     except Exception as e:
@@ -341,12 +345,44 @@ def get_problem():
         res_for_client = []
         for problem in problems:
             if problem.tenant == user and problem.building == building and not problem.status == 3:
-                res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status], 'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d")})
+                res_for_client.append(
+                    {'id': str(problem.id), 'type': types[problem.type], 'description': problem.description,
+                     'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status],
+                     'problem_creator_email': problem.tenant.email,
+                     'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d"),
+                     'image': base64.b64encode(problem.image).decode('utf-8')})
+                # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status], 'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d")})
                 # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
 
         return jsonify(res_for_client), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/get_problems_by_building', methods=['GET'])
+def get_problems_by_building():
+    try:
+        types = ["", "Electricity", "Plumbing", "infrastructure", "Construction", "Other"]
+        statuses = ["", "opened", "in treatment", "solved"]
+        data = request.args
+        building = Building.objects.get(address=data['address'])
+        problems = Problem.objects()
+        res_for_client = []
+        for problem in problems:
+            if problem.building == building and not problem.status == 3:
+                res_for_client.append({'id': str(problem.id), 'type': types[problem.type],
+                                       'description': problem.description,
+                                       'opening_date': problem.date1.strftime("%Y-%m-%d"),
+                                       'status': statuses[problem.status],
+                                       'problem_creator_email': problem.tenant.email,
+                                       'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d"),
+                                       'image': base64.b64encode(problem.image).decode('utf-8')})
+                # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
+
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 
 @app.route('/buildings/update_problem', methods=['POST'])
@@ -357,7 +393,7 @@ def update_problem():
         if problem.status == 1:
             problem.date2 = datetime.now()
             problem.status = 2
-        if problem.status == 2:
+        elif problem.status == 2:
             problem.date3 = datetime.now()
             problem.status = 3
         problem.save()
