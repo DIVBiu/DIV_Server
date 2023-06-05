@@ -21,9 +21,8 @@ from PIL import Image
 
 app = Flask(__name__)
 app.config['MONGODB_SETTINGS'] = {
-    'db': 'test',
-    'host': 'localhost',
-    'port': 27017
+    'db': 'DB',
+    'host': 'mongodb+srv://dviramram:Q1w2e3r4@db.sswgsxf.mongodb.net/',
 }
 db = MongoEngine(app)
 
@@ -323,10 +322,13 @@ def new_problem():
         type = data['type']
         description = data['description']
         client_date = parse(data['date'])
-
-        image_bytes = base64.b64decode(data['image'].replace(" ", "+"))
-        problem = Problem(type=type, description=description, status=1, tenant=user, date1=client_date,
-                          image=image_bytes, building=building)
+        if (data['image'] != ""):
+            image_bytes = base64.b64decode(data['image'].replace(" ", "+"))
+            problem = Problem(type=type, description=description, status=1, tenant=user, date1=client_date,
+                              image=image_bytes, building=building)
+        else:
+            problem = Problem(type=type, description=description, status=1, tenant=user, date1=client_date,
+                              building=building)
         problem.save()
         return jsonify(problem.to_dict()), 200
     except Exception as e:
@@ -350,7 +352,7 @@ def get_problem():
                      'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status],
                      'problem_creator_email': problem.tenant.email,
                      'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d"),
-                     'image': base64.b64encode(problem.image).decode('utf-8')})
+                     'image': "" if problem.image == None else base64.b64encode(problem.image).decode('utf-8')})
                 # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status], 'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d")})
                 # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
 
@@ -376,7 +378,7 @@ def get_problems_by_building():
                                        'status': statuses[problem.status],
                                        'problem_creator_email': problem.tenant.email,
                                        'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d"),
-                                       'image': base64.b64encode(problem.image).decode('utf-8')})
+                                       'image': "" if problem.image == None else base64.b64encode(problem.image).decode('utf-8')})
                 # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
 
         return jsonify(res_for_client), 200
@@ -412,6 +414,9 @@ def add_tenant_to_building():
         building = Building.objects.get(address=address)
         if user in building.tenants:
             return jsonify({'error': 'The tenant is already registered in this building'}), 500
+        if user in building.pending_approval_tenants:
+            return jsonify({'error': 'The tenant is already pending approval for this building'}), 500
+
         building.pending_approval_tenants.append(user)
         building.save()
         return jsonify(building.to_dict()), 200
@@ -587,6 +592,8 @@ def add_car():
             car = Car.objects.get(car_number=car_number)
             if car in building.cars:
                 return jsonify({'error': 'This car is already registered in this building'}), 500
+            if car in building.pending_approval_cars:
+                return jsonify({'error': 'This car is already pending approval for this building'}), 500
         else:
             car = Car(car_number=car_number, owner=user)
             car.save()
