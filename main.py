@@ -17,7 +17,7 @@ from PIL import Image
 
 # model_id = os.environ.get('NANONETS_MODEL_ID')
 # api_key = os.environ.get('NANONETS_API_KEY')
-
+from licence_plate_recognition_model import licence_plate_recognition
 
 app = Flask(__name__)
 app.config['MONGODB_SETTINGS'] = {
@@ -462,6 +462,40 @@ def get_surveys_by_building():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/buildings/get_answered_surveys_by_building', methods=['GET'])
+def get_answered_surveys():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        email = data["email"]
+        client_date = parse(data['client_date'])
+        user = User.objects.get(email=email)
+        surveys = building.surveys
+        res_for_client = []
+        building_tenant = set(building.tenants)
+        for survey in surveys:
+            tenants_answered = set([result.user for result in survey.results])
+            if survey.deadline < client_date or building_tenant.issubset(tenants_answered):
+                res_for_client.append({'title': survey.title, 'deadline': survey.deadline.strftime("%Y-%m-%d %H:%M:%S")})
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/get_results', methods=['GET'])
+def get_results():
+    try:
+        data = request.args
+        survey = Survey.objects.get(title=data["title"])
+        res_for_client = {'question': survey.question, 'results': []}
+        for answer in survey.list_of_answers:
+            n = len([x for x in survey.results if survey.list_of_answers[x.choice] == answer])
+            res_for_client['results'].append({'answer': answer, 'amount': str(n)})
+
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/buildings/get_survey_by_title', methods=['GET'])
 def get_survey_by_title():
     try:
@@ -580,13 +614,14 @@ def add_car():
         car_number = data['car_number']
         if flag == '1':
             image_bytes = base64.b64decode(car_number.replace(" ", "+"))
-            file_name = generate_random_string(10) + ".jpg"
+            # file_name = generate_random_string(10) + ".jpg"
             image = Image.open(io.BytesIO(image_bytes))
-            image.save(file_name)
-            #output = os.system("python ./prediction.py ./images/151.jpg")
-            output = fromImageToString("./" + file_name)
-            dict_obj = json.loads(output.text)
-            car_number = dict_obj['result'][0]['prediction'][0]['ocr_text']
+            car_number = licence_plate_recognition(image)
+            # image.save(file_name)
+            # #output = os.system("python ./prediction.py ./images/151.jpg")
+            # output = fromImageToString("./" + file_name)
+            # dict_obj = json.loads(output.text)
+            # car_number = dict_obj['result'][0]['prediction'][0]['ocr_text']
         is_exist = Car.objects(car_number=car_number)
         if is_exist:
             car = Car.objects.get(car_number=car_number)
