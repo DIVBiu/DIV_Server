@@ -184,7 +184,8 @@ def licence_plate_recognition(pil_image):
 
 if __name__ == '__main__':
     pass
-    # original_image = cv2.imread('./try9.jpeg')
+    # original_image = cv2.imread('./try2.jpg')
+    # licence_plate_recognition(original_image)
     # plt.imshow(original_image)
     # plt.show()
     #

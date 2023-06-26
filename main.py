@@ -353,8 +353,6 @@ def get_problem():
                      'problem_creator_email': problem.tenant.email,
                      'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d"),
                      'image': "" if problem.image == None else base64.b64encode(problem.image).decode('utf-8')})
-                # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status], 'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d")})
-                # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
 
         return jsonify(res_for_client), 200
     except Exception as e:
@@ -379,7 +377,6 @@ def get_problems_by_building():
                                        'problem_creator_email': problem.tenant.email,
                                        'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d"),
                                        'image': "" if problem.image == None else base64.b64encode(problem.image).decode('utf-8')})
-                # res_for_client.append({'id': str(problem.id), 'type': types[problem.type], 'description': problem.description, 'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status]})
 
         return jsonify(res_for_client), 200
     except Exception as e:
@@ -582,18 +579,17 @@ def delete_Building(id):
         return jsonify({'error': str(e)}), 500
 
 
-def fromImageToString(image_path):
-    model_id = "b40c2427-0c1b-465b-a5f5-74a66dce8747"
-    api_key = "13f5c022-e9c4-11ed-b37e-d24b52dfb1e9"
-    # image_path = sys.argv[1]
-
-    url = 'https://app.nanonets.com/api/v2/ObjectDetection/Model/' + model_id + '/LabelFile/'
-
-    data = {'file': open(image_path, 'rb'),    'modelId': ('', model_id)}
-
-    response = requests.post(url, auth=requests.auth.HTTPBasicAuth(api_key, ''), files=data)
-
-    return response
+# def fromImageToString(image_path):
+#     model_id = "b40c2427-0c1b-465b-a5f5-74a66dce8747"
+#     api_key = "13f5c022-e9c4-11ed-b37e-d24b52dfb1e9"
+#
+#     url = 'https://app.nanonets.com/api/v2/ObjectDetection/Model/' + model_id + '/LabelFile/'
+#
+#     data = {'file': open(image_path, 'rb'),    'modelId': ('', model_id)}
+#
+#     response = requests.post(url, auth=requests.auth.HTTPBasicAuth(api_key, ''), files=data)
+#
+#     return response
 
 
 def generate_random_string(length):
@@ -614,14 +610,8 @@ def add_car():
         car_number = data['car_number']
         if flag == '1':
             image_bytes = base64.b64decode(car_number.replace(" ", "+"))
-            # file_name = generate_random_string(10) + ".jpg"
             image = Image.open(io.BytesIO(image_bytes))
             car_number = licence_plate_recognition(image)
-            # image.save(file_name)
-            # #output = os.system("python ./prediction.py ./images/151.jpg")
-            # output = fromImageToString("./" + file_name)
-            # dict_obj = json.loads(output.text)
-            # car_number = dict_obj['result'][0]['prediction'][0]['ocr_text']
         is_exist = Car.objects(car_number=car_number)
         if is_exist:
             car = Car.objects.get(car_number=car_number)
