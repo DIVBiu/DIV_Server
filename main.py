@@ -526,7 +526,7 @@ def update_survey():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/buildings/remove_tenant_from_building', methods=['PUT'])
+@app.route('/buildings/remove_tenant_from_building', methods=['Get'])
 def remove_tenant_from_building():
     try:
         data = request.args
@@ -534,14 +534,50 @@ def remove_tenant_from_building():
         address = data.get('address')
         user = User.objects.get(email=email)
         building = Building.objects.get(address=address)
-        Building.objects(id=building.id).update_one(pull__tenants=user)
-        # if user in building.tenants:
-        #     return jsonify({'error': 'The tenant is already registered in this building'}), 500
-        # building.tenants.append(user)
-        # building.save()
-        return jsonify(building.to_dict()), 200
+        if not user == building.admin:
+            Building.objects(id=building.id).update_one(pull__tenants=user)
+            return jsonify({'message': 'Tenant successfully removed'}), 200
+
+        if user == building.admin:
+            if len(building.tenants) == 1:
+                Building.objects(id=building.id).update_one(pull__tenants=user)
+                building.delete()
+                return jsonify({'message': 'You were the only tenant in this building and therefore the building has'
+                                           'been removed from the database'}), 200
+            else:
+                return jsonify({'message': 'choose another admin'}), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/get_tenants_by_building', methods=['Get'])
+def get_tenants_by_building():
+    try:
+        data = request.args
+        address = data.get('address')
+        building = Building.objects.get(address=address)
+        return jsonify({"tenants": [tenant.email for tenant in building.tenants if not tenant == building.admin]}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/update_admin', methods=['Get'])
+def update_admin():
+    try:
+        data = request.args
+        address = data.get('address')
+        new_email = data.get('new_email')
+        building = Building.objects.get(address=address)
+        old_admin = building.admin
+        new_admin = User.objects.get(email=new_email)
+        building.admin = new_admin
+        Building.objects(id=building.id).update_one(pull__tenants=old_admin)
+        building.save()
+        return jsonify({'message': 'admin changed'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 
 
 
