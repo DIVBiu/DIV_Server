@@ -340,8 +340,8 @@ def create_Building():
         building.save()
 
         #if you want threads - run this:
-        # thread = threading.Thread(target=check_availability, args=(building.index,))
-        # thread.start()
+        thread = threading.Thread(target=check_availability, args=(building.index,))
+        thread.start()
         # until here if you want threads
 
         return jsonify(building.to_dict()), 201
@@ -589,7 +589,7 @@ def get_parking_slots():
         i = building.index
 
         # without treads run:
-        check_availability(i)
+        # check_availability(i)
         # ---------
         building = Building.objects.get(address=data["address"])
         res_for_client = {'amount': str(building.available_parking_amount)}
