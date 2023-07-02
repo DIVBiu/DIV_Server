@@ -3,6 +3,8 @@ import random
 import string
 import sys
 import subprocess
+import time
+import zlib
 from datetime import datetime
 
 import requests
@@ -14,17 +16,35 @@ from dateutil.parser import parse
 import base64
 import io
 from PIL import Image
+import cv2
+from util import get_parking_spots_bboxes, empty_or_not
+import numpy as np
 
-# model_id = os.environ.get('NANONETS_MODEL_ID')
-# api_key = os.environ.get('NANONETS_API_KEY')
+# from main import amount_of_free_parking
+#
+from parking_spot_detection_and_counter import check_availability, generate_random_filename
+
+import threading
+
+
+
 from licence_plate_recognition_model import licence_plate_recognition
 
+print("Connecting to DB")
 app = Flask(__name__)
 app.config['MONGODB_SETTINGS'] = {
     'db': 'DB',
     'host': 'mongodb+srv://dviramram:Q1w2e3r4@db.sswgsxf.mongodb.net/',
 }
 db = MongoEngine(app)
+print("Connected")
+
+# threads = []
+
+
+
+
+
 
 
 
@@ -74,6 +94,10 @@ class Building(db.Document):
     admin = db.ReferenceField('User', required=True)
     pending_approval_tenants = db.ListField(db.ReferenceField('User'))
     pending_approval_cars = db.ListField(db.ReferenceField('Car'))
+    index = db.IntField(required=True, unique=True)
+    parking_amount = db.IntField()
+    available_parking_amount = db.IntField()
+    update_parking_image = db.StringField()
 
     def to_dict(self):
         return {'id': str(self.id), 'address': self.address, 'admin': self.admin, 'tenants': self.tenants, 'chat': self.chat}
@@ -93,7 +117,7 @@ class Problem(db.Document):
     description = db.StringField(required=True)
     status = db.IntField(required=True)
     tenant = db.ReferenceField('User', required=True)
-    image = db.BinaryField()
+    image = db.StringField()
     date1 = db.DateTimeField(required=True)
     date2 = db.DateTimeField()
     date3 = db.DateTimeField()
@@ -102,6 +126,7 @@ class Problem(db.Document):
 
     def to_dict(self):
         return {'id': str(self.id), 'description': self.description}
+
 
 
 
@@ -297,15 +322,28 @@ def get_Building(id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def get_lowest_available_index():
+    buildings = Building.objects.order_by('index').only('index')
+    if not buildings:
+        return 0
+    return buildings[len(buildings)-1].index + 1
 
 @app.route('/buildings/new_building', methods=['PUT'])
 def create_Building():
     try:
         data = request.args
         admin = User.objects.get(email=data['email'])
-        building = Building(address=data['address'], admin=admin)
+        building = Building(address=data['address'], admin=admin, index=get_lowest_available_index(), parking_amount=396
+                            , available_parking_amount=0, update_parking_image="")
+
         building.tenants.append(admin)
         building.save()
+
+        #if you want threads - run this:
+        # thread = threading.Thread(target=check_availability, args=(building.index,))
+        # thread.start()
+        # until here if you want threads
+
         return jsonify(building.to_dict()), 201
     except KeyError:
         return jsonify({'error': 'Missing required field(s)'}), 400
@@ -323,12 +361,17 @@ def new_problem():
         description = data['description']
         client_date = parse(data['date'])
         if (data['image'] != ""):
-            image_bytes = base64.b64decode(data['image'].replace(" ", "+"))
+            image_data = base64.b64decode(data['image'].replace(" ", "+"))
+            np_arr = np.frombuffer(image_data, np.uint8)
+            image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            file_name = generate_random_filename() + '.jpg'
+            cv2.imwrite(file_name, image)
+
             problem = Problem(type=type, description=description, status=1, tenant=user, date1=client_date,
-                              image=image_bytes, building=building)
+                              image=file_name, building=building)
         else:
             problem = Problem(type=type, description=description, status=1, tenant=user, date1=client_date,
-                              building=building)
+                              image="", building=building)
         problem.save()
         return jsonify(problem.to_dict()), 200
     except Exception as e:
@@ -347,12 +390,27 @@ def get_problem():
         res_for_client = []
         for problem in problems:
             if problem.tenant == user and problem.building == building and not problem.status == 3:
+
+                path_image = problem.image
+                if path_image == "":
+                    image_str = ""
+                else:
+                    img = cv2.imread("./" + path_image)
+                    # Define compression parameters
+                    compression_params = [cv2.IMWRITE_JPEG_QUALITY, 90]  # Adjust quality as desired (0-100)
+
+                    # Compress the image to JPEG format
+                    _, compressed_image = cv2.imencode('.jpg', img, compression_params)
+
+                    # Convert the compressed image to a string in base64 format
+                    image_str = base64.b64encode(compressed_image).decode('utf-8')
+
                 res_for_client.append(
                     {'id': str(problem.id), 'type': types[problem.type], 'description': problem.description,
                      'opening_date': problem.date1.strftime("%Y-%m-%d"), 'status': statuses[problem.status],
                      'problem_creator_email': problem.tenant.email,
                      'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d"),
-                     'image': "" if problem.image == None else base64.b64encode(problem.image).decode('utf-8')})
+                     'image': image_str})
 
         return jsonify(res_for_client), 200
     except Exception as e:
@@ -370,13 +428,28 @@ def get_problems_by_building():
         res_for_client = []
         for problem in problems:
             if problem.building == building and not problem.status == 3:
+
+                path_image = problem.image
+                if path_image == "":
+                    image_str = ""
+                else:
+                    img = cv2.imread("./" + path_image)
+                    # Define compression parameters
+                    compression_params = [cv2.IMWRITE_JPEG_QUALITY, 90]  # Adjust quality as desired (0-100)
+
+                    # Compress the image to JPEG format
+                    _, compressed_image = cv2.imencode('.jpg', img, compression_params)
+
+                    # Convert the compressed image to a string in base64 format
+                    image_str = base64.b64encode(compressed_image).decode('utf-8')
+
                 res_for_client.append({'id': str(problem.id), 'type': types[problem.type],
                                        'description': problem.description,
                                        'opening_date': problem.date1.strftime("%Y-%m-%d"),
                                        'status': statuses[problem.status],
                                        'problem_creator_email': problem.tenant.email,
                                        'treatment_start': "null" if problem.date2 == None else problem.date2.strftime("%Y-%m-%d"),
-                                       'image': "" if problem.image == None else base64.b64encode(problem.image).decode('utf-8')})
+                                       'image': image_str})
 
         return jsonify(res_for_client), 200
     except Exception as e:
@@ -508,20 +581,66 @@ def get_survey_by_title():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/buildings/get_parking_slots', methods=['GET'])
+def get_parking_slots():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        i = building.index
+
+        # without treads run:
+        check_availability(i)
+        # ---------
+        building = Building.objects.get(address=data["address"])
+        res_for_client = {'amount': str(building.available_parking_amount)}
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/buildings/get_parking_image', methods=['GET'])
+def get_parking_image():
+    try:
+        data = request.args
+        building = Building.objects.get(address=data["address"])
+        path_image = building.update_parking_image
+        if path_image == "":
+            image_str = ""
+        else:
+            img = cv2.imread("./" + building.update_parking_image)
+            resized_image = cv2.resize(img, (800, 600), interpolation=cv2.INTER_AREA)
+            # Define compression parameters
+            compression_params = [cv2.IMWRITE_JPEG_QUALITY, 90]  # Adjust quality as desired (0-100)
+
+            # Compress the image to JPEG format
+            _, compressed_image = cv2.imencode('.jpg', resized_image, compression_params)
+
+            # Convert the compressed image to a string in base64 format
+            image_str = base64.b64encode(compressed_image).decode('utf-8')
+        res_for_client = {'image': image_str}
+        return jsonify(res_for_client), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/buildings/update_survey', methods=['POST'])
 def update_survey():
     try:
         data = request.args
-        # building = Building.objects.get(address=data["address"])
+        building = Building.objects.get(address=data["address"])
         email = data["email"]
         survey = Survey.objects.get(title=data["title"])
         choice = data['choice']
+        # address = data['address']
         user = User.objects.get(email=email)
         result = Result(user=user, choice=choice)
         result.save()
         survey.results.append(result)
         survey.save()
-        return jsonify(result.to_dict()), 200
+        if user == building.admin:
+            return jsonify(result.to_dict()), 201
+        else:
+            return jsonify(result.to_dict()), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -615,17 +734,6 @@ def delete_Building(id):
         return jsonify({'error': str(e)}), 500
 
 
-# def fromImageToString(image_path):
-#     model_id = "b40c2427-0c1b-465b-a5f5-74a66dce8747"
-#     api_key = "13f5c022-e9c4-11ed-b37e-d24b52dfb1e9"
-#
-#     url = 'https://app.nanonets.com/api/v2/ObjectDetection/Model/' + model_id + '/LabelFile/'
-#
-#     data = {'file': open(image_path, 'rb'),    'modelId': ('', model_id)}
-#
-#     response = requests.post(url, auth=requests.auth.HTTPBasicAuth(api_key, ''), files=data)
-#
-#     return response
 
 
 def generate_random_string(length):
@@ -744,7 +852,25 @@ def amount_of_cars_per_building():
 
 
 if __name__ == '__main__':
+    # if you want threads - run this:
+    # buildings = Building.objects.order_by('index')  # Retrieve all buildings and order them by index
+    # print("Starting threads")
+    # index = 0
+    # if buildings:
+    #     print(f'Building length {buildings}')
+    #     for building in buildings:
+    #         print(f'start thread {index+1}')
+    #         index += 1
+    #         client_thread = threading.Thread(target=check_availability, args=(building.index,))
+    #         client_thread.start()
+    #         # threads.append(client_thread)
+    #         print(f'Index {index} started.')
+    #         # client_thread.join()
+    # print("Running app")
+    # until here if you want threads
+
     app.run(port=5000, host='0.0.0.0', debug=True)
+
     # app.run()
 
 
